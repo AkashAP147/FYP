@@ -9,6 +9,15 @@ import subprocess
 import re
 import urllib.request
 
+# NumPy 1.x / 2.x Compatibility Shim (fixes Detectron2 & CatVTON np.int and np.float removals)
+try:
+    import numpy as np
+    for _alias, _target in [('int', int), ('float', float), ('bool', bool), ('complex', complex)]:
+        if not hasattr(np, _alias):
+            setattr(np, _alias, _target)
+except ImportError:
+    pass
+
 def check_environment():
     print("=" * 65)
     print("1. Checking Hardware & GPU Acceleration")

@@ -1,5 +1,12 @@
 import os
 import uuid
+
+# NumPy 1.x / 2.x Compatibility Shim (fixes Detectron2 & CatVTON np.int and np.float removals)
+import numpy as np
+for _alias, _target in [('int', int), ('float', float), ('bool', bool), ('complex', complex)]:
+    if not hasattr(np, _alias):
+        setattr(np, _alias, _target)
+
 from flask import Flask, render_template, request, jsonify, url_for
 from werkzeug.utils import secure_filename
 from tryon_engine import process_tryon, process_dual_tryon
