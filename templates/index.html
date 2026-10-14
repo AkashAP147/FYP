@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FITTED | Virtual Try-On Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar"><a class="brand" href="/">FITTED<span>.</span></a><nav><a href="#studio">Virtual studio</a><a href="#wardrobe">My wardrobe</a><a href="#looks">My looks</a></nav><div class="status-dot"><i></i> AI studio online</div></header>
+        <main>
+            <section class="hero"><div><p class="eyebrow">THE FUTURE OF FIT</p><h1>See it on <em>you.</em></h1><p class="hero-copy">A smarter way to discover your next signature look. Upload a photo, choose a piece, and let our fitting studio do the styling.</p></div><div class="hero-note"><span>01</span><p>Personalized<br>to your proportions</p></div></section>
+            <section id="studio" class="studio-grid">
+                <div class="panel workspace-panel">
+                    <div class="panel-heading"><div><p class="eyebrow">VIRTUAL STUDIO</p><h2>Build your look</h2></div><span class="step-count">2 steps</span></div>
+                    <div class="upload-grid">
+                        <div class="upload-card" id="dropzone"><input type="file" id="fileInput" accept="image/*" hidden><div class="upload-number">01</div><div class="preview" id="personPreview"><div class="upload-icon">+</div><strong>Your photo</strong><span>Full-body works best</span></div><button id="browseBtn" class="text-button" type="button">Choose photo <b>↗</b></button></div>
+                        <div class="upload-card" id="clothingDropzone"><input type="file" id="clothingFileInput" accept="image/*" hidden><div class="upload-number">02</div><div class="preview" id="clothingPreview"><div class="upload-icon">+</div><strong>Your garment</strong><span>Clean product shot preferred</span></div><button id="clothingBrowseBtn" class="text-button" type="button">Choose garment <b>↗</b></button></div>
+                    </div>
+                    <div class="extractor-section" style="margin-top: 20px;">
+                        <input type="file" id="outfitFileInput" accept="image/*" hidden>
+                        <button id="extractGarmentBtn" class="text-button" type="button" style="width: 100%; border: 1px dashed var(--line); padding: 12px; text-align: center; color: var(--green-dark);">Or extract garments from an outfit photo <b>↗</b></button>
+                        <div id="extractLoader" class="loader hidden" style="margin-top: 15px; justify-content: center;"><div class="spinner" style="width: 18px; height: 18px;"></div><span>Extracting garments...</span></div>
+                        <div id="extractedGarments" class="gallery hidden" style="margin-top: 15px; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                        </div>
+                    </div>
+                    <div class="controls"><label for="clothingTypeSelect">Garment category<select id="clothingTypeSelect" name="cloth_type"><option value="upper_short">Top / T-shirt</option><option value="upper">Jacket / Long sleeve</option><option value="lower">Pants / Shorts</option><option value="overall">Dress / Full outfit</option></select></label><button id="fitButton" class="primary-button" disabled type="button">Try it on <span>→</span></button></div>
+                    <div id="loader" class="loader hidden"><div class="spinner"></div><div><strong>Creating your look</strong><span>Mapping fabric, shape and fit...</span></div></div><p id="formMessage" class="form-message" role="status"></p>
+                </div>
+                <aside class="panel promise-panel"><p class="eyebrow">WHY FITTED</p><h2>Confidence,<br><em>before</em> checkout.</h2><div class="promise-list"><div><span>✦</span><p><b>Realistic drape</b><small>Powered by CatVTON AI</small></p></div><div><span>◌</span><p><b>Keep your shape</b><small>Your face and proportions stay yours</small></p></div><div><span>↗</span><p><b>Try more, waste less</b><small>Save your favorite looks in one place</small></p></div></div></aside>
+            </section>
+            <section id="wardrobe" class="looks-section" style="padding-bottom: 20px;">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">YOUR CLOSET</p>
+                        <h2>My wardrobe</h2>
+                    </div>
+                    <span class="section-hint">Click a garment to try it on</span>
+                </div>
+                <h3 style="margin-top: 10px; font-family: 'Playfair Display', serif; font-size: 1.2rem;">Tops</h3>
+                <div id="wardrobeGalleryTops" class="gallery">
+                    <div class="empty-state">Extracted tops will appear here.</div>
+                </div>
+                <h3 style="margin-top: 20px; font-family: 'Playfair Display', serif; font-size: 1.2rem;">Bottoms</h3>
+                <div id="wardrobeGalleryBottoms" class="gallery">
+                    <div class="empty-state">Extracted bottoms will appear here.</div>
+                </div>
+            </section>
+            <section id="looks" class="looks-section"><div class="section-heading"><div><p class="eyebrow">YOUR FITTING ROOM</p><h2>Recent looks</h2></div><span class="section-hint">Click a look to view it larger</span></div><div id="historyGallery" class="gallery"><div class="empty-state">Your generated looks will appear here.</div></div></section>
+        </main>
+        <footer><span>FITTED. AI styling studio</span><span>Made for exploring what feels like you.</span></footer>
+    </div>
+    <div id="lightbox" class="lightbox hidden"><button class="close-lightbox" id="closeLightbox" type="button">×</button><button class="lightbox-btn left" id="prevLightbox" type="button">←</button><img id="lightboxImg" src="" alt="Generated virtual try-on"><button class="lightbox-btn right" id="nextLightbox" type="button">→</button></div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
