@@ -3,9 +3,18 @@ import uuid
 
 # NumPy 1.x / 2.x Compatibility Shim (fixes Detectron2 & CatVTON np.int and np.float removals)
 import numpy as np
-for _alias, _target in [('int', int), ('float', float), ('bool', bool), ('complex', complex)]:
-    if not hasattr(np, _alias):
-        setattr(np, _alias, _target)
+try:
+    _ = np.int
+except (AttributeError, Exception):
+    np.int = int
+try:
+    _ = np.float
+except (AttributeError, Exception):
+    np.float = float
+try:
+    _ = np.bool
+except (AttributeError, Exception):
+    np.bool = bool
 
 from flask import Flask, render_template, request, jsonify, url_for
 from werkzeug.utils import secure_filename
