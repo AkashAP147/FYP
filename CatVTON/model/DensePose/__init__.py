@@ -10,6 +10,11 @@ import numpy as np
 import torch
 from PIL import Image
 from densepose.config import add_densepose_config
+import densepose.modeling.roi_heads  # noqa: F401 - ensures DensePoseROIHeads is registered in ROI_HEADS_REGISTRY
+try:
+    import densepose.modeling.hrfpn  # noqa: F401
+except Exception:
+    pass
 from densepose.vis.base import CompoundVisualizer
 from densepose.vis.densepose_results import DensePoseResultsFineSegmentationVisualizer
 from densepose.vis.extractor import create_extractor, CompoundExtractor

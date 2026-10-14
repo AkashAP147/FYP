@@ -10,7 +10,7 @@ from torch.nn import functional as F
 
 from detectron2.structures import BoxMode, Instances
 
-from densepose import DensePoseDataRelative
+from densepose.structures.data_relative import DensePoseDataRelative
 
 LossDict = Dict[str, torch.Tensor]
 

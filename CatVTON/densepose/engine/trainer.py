@@ -22,7 +22,8 @@ from detectron2.solver.build import get_default_optimizer_params, maybe_add_grad
 from detectron2.utils import comm
 from detectron2.utils.events import EventWriter, get_event_storage
 
-from densepose import DensePoseDatasetMapperTTA, DensePoseGeneralizedRCNNWithTTA, load_from_cfg
+from densepose.modeling.test_time_augmentation import DensePoseDatasetMapperTTA, DensePoseGeneralizedRCNNWithTTA
+from densepose.utils.transform import load_from_cfg
 from densepose.data import (
     DatasetMapper,
     build_combined_loader,

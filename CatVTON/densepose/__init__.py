@@ -10,17 +10,46 @@ from .config import (
     load_bootstrap_config,
 )
 
+# Explicitly register modeling components with Detectron2
+try:
+    from .modeling.roi_heads import DensePoseROIHeads
+except Exception:
+    pass
+
+try:
+    from .modeling.hrfpn import build_hrfpn_backbone
+except Exception:
+    pass
+
 try:
     from .structures import DensePoseDataRelative, DensePoseList, DensePoseTransformData
-    from .modeling.roi_heads import DensePoseROIHeads
+except Exception:
+    pass
+
+try:
     from .modeling.test_time_augmentation import (
         DensePoseGeneralizedRCNNWithTTA,
         DensePoseDatasetMapperTTA,
     )
+except Exception:
+    pass
+
+try:
     from .utils.transform import load_from_cfg
-    from .modeling.hrfpn import build_hrfpn_backbone
+except Exception:
+    pass
+
+try:
     from .data.datasets import builtin
+except Exception:
+    pass
+
+try:
     from .converters import builtin as builtin_converters
+except Exception:
+    pass
+
+try:
     from .evaluation import DensePoseCOCOEvaluator
 except Exception:
     pass

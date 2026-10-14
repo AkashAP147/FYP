@@ -9,7 +9,11 @@ import torch
 
 from detectron2.utils.file_io import PathManager
 
-from densepose.data.meshes.catalog import MeshCatalog, MeshInfo
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from densepose.data.meshes.catalog import MeshInfo
+else:
+    MeshInfo = object
 
 
 def _maybe_copy_to_device(
@@ -169,4 +173,5 @@ def load_mesh_symmetry(
 
 @lru_cache()
 def create_mesh(mesh_name: str, device: Optional[torch.device] = None) -> Mesh:
+    from densepose.data.meshes.catalog import MeshCatalog
     return Mesh(mesh_info=MeshCatalog[mesh_name], device=device)
