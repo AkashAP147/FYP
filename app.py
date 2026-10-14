@@ -1,5 +1,7 @@
 import os
 import uuid
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 # NumPy 1.x / 2.x Compatibility Shim (fixes Detectron2 & CatVTON np.int and np.float removals)
 import numpy as np

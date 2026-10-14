@@ -1,11 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 # pyre-unsafe
-try:
-    from .data.datasets import builtin  # just to register data
-except Exception:
-    pass
-from .converters import builtin as builtin_converters  # register converters
 from .config import (
     add_densepose_config,
     add_densepose_head_config,
@@ -14,12 +9,20 @@ from .config import (
     add_bootstrap_config,
     load_bootstrap_config,
 )
-from .structures import DensePoseDataRelative, DensePoseList, DensePoseTransformData
-from .evaluation import DensePoseCOCOEvaluator
-from .modeling.roi_heads import DensePoseROIHeads
-from .modeling.test_time_augmentation import (
-    DensePoseGeneralizedRCNNWithTTA,
-    DensePoseDatasetMapperTTA,
-)
-from .utils.transform import load_from_cfg
-from .modeling.hrfpn import build_hrfpn_backbone
+
+try:
+    from .structures import DensePoseDataRelative, DensePoseList, DensePoseTransformData
+    from .modeling.roi_heads import DensePoseROIHeads
+    from .modeling.test_time_augmentation import (
+        DensePoseGeneralizedRCNNWithTTA,
+        DensePoseDatasetMapperTTA,
+    )
+    from .utils.transform import load_from_cfg
+    from .modeling.hrfpn import build_hrfpn_backbone
+    from .data.datasets import builtin
+    from .converters import builtin as builtin_converters
+    from .evaluation import DensePoseCOCOEvaluator
+except Exception:
+    pass
+
+

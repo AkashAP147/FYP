@@ -6,6 +6,8 @@ rendering authentic garments while preserving 100% of the original photo.
 """
 import os
 import sys
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
 import torch
 import numpy as np
 

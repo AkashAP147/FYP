@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from densepose import add_densepose_config
+from densepose.config import add_densepose_config
 from densepose.vis.base import CompoundVisualizer
 from densepose.vis.densepose_results import DensePoseResultsFineSegmentationVisualizer
 from densepose.vis.extractor import create_extractor, CompoundExtractor

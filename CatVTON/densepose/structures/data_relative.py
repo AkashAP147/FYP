@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from densepose.data.meshes.catalog import MeshCatalog
 from densepose.structures.mesh import load_mesh_symmetry
 from densepose.structures.transform_data import DensePoseTransformData
 
@@ -213,6 +212,7 @@ class DensePoseDataRelative:
                 )
 
     def _flip_vertices(self):
+        from densepose.data.meshes.catalog import MeshCatalog
         mesh_info = MeshCatalog[MeshCatalog.get_mesh_name(self.mesh_id)]
         mesh_symmetry = (
             load_mesh_symmetry(mesh_info.symmetry) if mesh_info.symmetry is not None else None
