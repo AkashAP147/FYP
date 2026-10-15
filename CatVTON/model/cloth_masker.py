@@ -195,9 +195,17 @@ class AutoMasker:
         assert part in ['upper', 'lower', 'overall', 'inner', 'outer'], f"part should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {part}"
         w, h = densepose_mask.size
         
-        dilate_kernel = max(w, h) // 250
-        dilate_kernel = dilate_kernel if dilate_kernel % 2 == 1 else dilate_kernel + 1
-        dilate_kernel = np.ones((dilate_kernel, dilate_kernel), np.uint8)
+        # Larger dilation kernel for better garment boundary coverage
+        dilate_kernel_size = max(w, h) // 200
+        dilate_kernel_size = dilate_kernel_size if dilate_kernel_size % 2 == 1 else dilate_kernel_size + 1
+        dilate_kernel_size = max(dilate_kernel_size, 3)
+        dilate_kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
+        
+        # Separate larger kernel for hand/feet protection (prevents hand clipping)
+        hand_dilate_size = max(w, h) // 120
+        hand_dilate_size = hand_dilate_size if hand_dilate_size % 2 == 1 else hand_dilate_size + 1
+        hand_dilate_size = max(hand_dilate_size, 5)
+        hand_dilate_kernel = np.ones((hand_dilate_size, hand_dilate_size), np.uint8)
         
         kernal_size = max(w, h) // 25
         kernal_size = kernal_size if kernal_size % 2 == 1 else kernal_size + 1
@@ -207,12 +215,15 @@ class AutoMasker:
         schp_atr_mask = np.array(schp_atr_mask)
         
         # Strong Protect Area (Hands, Face, Accessory, Feet)
+        # Use larger dilation on hands/feet to prevent clipping at wrists/sleeves
         hands_protect_area = part_mask_of(['hands', 'feet'], densepose_mask, DENSE_INDEX_MAP)
-        hands_protect_area = cv2.dilate(hands_protect_area, dilate_kernel, iterations=1)
+        hands_protect_area = cv2.dilate(hands_protect_area, hand_dilate_kernel, iterations=2)
         hands_protect_area = hands_protect_area & \
             (part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_atr_mask, ATR_MAPPING) | \
              part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_lip_mask, LIP_MAPPING))
         face_protect_area = part_mask_of('Face', schp_lip_mask, LIP_MAPPING)
+        # Also dilate face protection slightly
+        face_protect_area = cv2.dilate(face_protect_area.astype(np.uint8), dilate_kernel, iterations=1).astype(bool)
 
         strong_protect_area = hands_protect_area | face_protect_area 
 
@@ -241,10 +252,27 @@ class AutoMasker:
 
         mask_area = hull_mask(mask_area * 255) // 255  # Convex Hull to expand the mask area
         mask_area = mask_area & (~weak_protect_area)
-        mask_area = cv2.GaussianBlur(mask_area * 255, (kernal_size, kernal_size), 0)
-        mask_area[mask_area < 25] = 0
-        mask_area[mask_area >= 25] = 1
-        mask_area = (mask_area | strong_mask_area) & (~strong_protect_area) 
+        
+        # Multi-pass Gaussian smoothing for smoother mask boundaries
+        mask_area_255 = (mask_area * 255).astype(np.uint8)
+        mask_area_255 = cv2.GaussianBlur(mask_area_255, (kernal_size, kernal_size), 0)
+        # Second smoothing pass with smaller kernel for refined edges
+        fine_kernel = max(kernal_size // 3, 3)
+        fine_kernel = fine_kernel if fine_kernel % 2 == 1 else fine_kernel + 1
+        mask_area_255 = cv2.GaussianBlur(mask_area_255, (fine_kernel, fine_kernel), 0)
+        mask_area = np.zeros_like(mask_area_255)
+        mask_area[mask_area_255 < 20] = 0
+        mask_area[mask_area_255 >= 20] = 1
+        
+        mask_area = (mask_area | strong_mask_area) & (~strong_protect_area)
+        
+        # Morphological closing to fill small holes/gaps in the mask
+        close_kernel_size = max(w, h) // 80
+        close_kernel_size = close_kernel_size if close_kernel_size % 2 == 1 else close_kernel_size + 1
+        close_kernel_size = max(close_kernel_size, 3)
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_kernel_size, close_kernel_size))
+        mask_area = cv2.morphologyEx(mask_area.astype(np.uint8), cv2.MORPH_CLOSE, close_kernel)
+        
         mask_area = cv2.dilate(mask_area, dilate_kernel, iterations=1)
 
         return Image.fromarray(mask_area * 255)

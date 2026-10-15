@@ -169,13 +169,55 @@ def init_add_item_id(config):
 
 
 def repaint_result(result, person_image, mask_image):
-    result, person, mask = np.array(result), np.array(person_image), np.array(mask_image)
-    # expand the mask to 3 channels & to 0~1
-    mask = np.expand_dims(mask, axis=2)
-    mask = mask / 255.0
-    # mask for result, ~mask for person
-    result_ = result * mask + person * (1 - mask)
-    return Image.fromarray(result_.astype(np.uint8))
+    """Seamlessly blend the diffusion result into the original person image
+    using multi-stage Gaussian feathered alpha compositing.
+    
+    This avoids hard edge cuts and visible seam artifacts by:
+      1. Eroding the mask slightly to avoid bleeding at boundaries
+      2. Applying progressive Gaussian blur for soft alpha gradients
+      3. Performing float-precision alpha blending
+    """
+    import cv2
+    result_np = np.array(result).astype(np.float32)
+    person_np = np.array(person_image).astype(np.float32)
+    mask_np = np.array(mask_image).astype(np.uint8)
+    
+    h, w = mask_np.shape[:2]
+    
+    # --- Stage 1: Morphological erosion to pull mask boundary inward ---
+    # This prevents garment edge pixels from bleeding into the background
+    erode_size = max(3, min(h, w) // 150)
+    if erode_size % 2 == 0:
+        erode_size += 1
+    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
+    mask_eroded = cv2.erode(mask_np, erode_kernel, iterations=1)
+    
+    # --- Stage 2: Multi-pass Gaussian feathering for smooth alpha gradient ---
+    # Use a kernel proportional to the image size for natural-looking transitions
+    blur_size = max(h, w) // 40  # ~2.5% of image dimension
+    if blur_size % 2 == 0:
+        blur_size += 1
+    blur_size = max(blur_size, 5)  # minimum kernel size
+    
+    alpha = cv2.GaussianBlur(mask_eroded.astype(np.float32), (blur_size, blur_size), 0)
+    # Second pass with smaller kernel for refined edge softness
+    fine_blur = max(blur_size // 3, 3)
+    if fine_blur % 2 == 0:
+        fine_blur += 1
+    alpha = cv2.GaussianBlur(alpha, (fine_blur, fine_blur), 0)
+    
+    # Normalize alpha to 0..1 range
+    alpha = alpha / 255.0
+    alpha = np.clip(alpha, 0.0, 1.0)
+    
+    # Expand to 3 channels for broadcasting
+    alpha = np.expand_dims(alpha, axis=2)
+    
+    # --- Stage 3: Float-precision alpha blending ---
+    blended = result_np * alpha + person_np * (1.0 - alpha)
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+    
+    return Image.fromarray(blended)
 
 
 def prepare_image(image):

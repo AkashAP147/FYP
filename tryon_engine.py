@@ -118,8 +118,9 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper'):
         cloth_image_orig = Image.open(source_path).convert("RGB")
         orig_w, orig_h = person_image_orig.size
 
-        # Optimal inference resolution (Divisible by 64, preserving 3:4 aspect ratio)
-        width, height = 576, 768
+        # Optimal inference resolution (higher res = sharper garment details)
+        # 768x1024 preserves 3:4 ratio and is divisible by 64
+        width, height = 768, 1024
 
         # Resize and prepare inputs using official CatVTON utilities
         person_image = resize_and_crop(person_image_orig, (width, height))
@@ -139,17 +140,17 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper'):
         _auto_masker.schp_processor_lip.model.to('cpu')
         torch.cuda.empty_cache()
 
-        # Apply official mask boundary blur
-        mask = _mask_processor.blur(mask, blur_factor=9)
+        # Apply official mask boundary blur (higher factor for smoother edges)
+        mask = _mask_processor.blur(mask, blur_factor=13)
 
         # ── Step 2: Official Diffusion Inference ──
-        print("\n[CatVTON 2/3] Running CatVTON diffusion pipeline (35 steps)...")
+        print("\n[CatVTON 2/3] Running CatVTON diffusion pipeline (50 steps)...")
         generator = torch.Generator(device='cuda').manual_seed(42)
         result_image = _vton_pipeline(
             image=person_image,
             condition_image=cloth_image,
             mask=mask,
-            num_inference_steps=35,
+            num_inference_steps=50,
             guidance_scale=2.5,
             height=height,
             width=width,
@@ -158,7 +159,16 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper'):
 
         # ── Step 3: Seamless Repainting (Authentic Background Preservation) ──
         print("\n[CatVTON 3/3] Blending synthesized garment to preserve authentic photo...")
-        mask_full = mask.resize((orig_w, orig_h), Image.BILINEAR)
+        # Upscale mask using LANCZOS (smooth anti-aliased edges, not blocky BILINEAR)
+        mask_full = mask.resize((orig_w, orig_h), Image.LANCZOS)
+        # Apply GaussianBlur feathering on the upscaled mask before compositing
+        # (matches official inference.py `repaint()` approach)
+        from PIL import ImageFilter
+        feather_radius = max(orig_h, orig_w) // 50
+        if feather_radius % 2 == 0:
+            feather_radius += 1
+        feather_radius = max(feather_radius, 3)
+        mask_full = mask_full.filter(ImageFilter.GaussianBlur(feather_radius))
         result_full = result_image.resize((orig_w, orig_h), Image.LANCZOS)
         final_result = repaint_result(result_full, person_image_orig, mask_full)
 
