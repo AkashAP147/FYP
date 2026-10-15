@@ -219,10 +219,12 @@ class AutoMasker:
         background_area = (part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & 
                            part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING))
         
-        # 2. Strong Protection: Hands, Face
+        # 2. Strong Protection: Hands (on limbs), Face
         hand_kernel = np.ones((max(3, max(w, h) // 180), max(3, max(w, h) // 180)), np.uint8)
         hands_dense = part_mask_of(['hands', 'feet'], densepose_mask, DENSE_INDEX_MAP)
-        hands_protect_area = cv2.dilate(hands_dense.astype(np.uint8), hand_kernel, iterations=2).astype(bool)
+        hands_on_limbs = (part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_atr_mask, ATR_MAPPING) | 
+                          part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_lip_mask, LIP_MAPPING))
+        hands_protect_area = (cv2.dilate(hands_dense.astype(np.uint8), hand_kernel, iterations=1).astype(bool)) & hands_on_limbs
         
         face_protect_area = (part_mask_of('Face', schp_lip_mask, LIP_MAPPING) | 
                              part_mask_of('Face', schp_atr_mask, ATR_MAPPING))

@@ -35,10 +35,11 @@ CATVTON_DIR = os.path.join(os.path.dirname(__file__), "CatVTON")
 if CATVTON_DIR not in sys.path:
     sys.path.insert(0, CATVTON_DIR)
 
+import cv2
 from diffusers.image_processor import VaeImageProcessor
 from huggingface_hub import snapshot_download
 from model.pipeline import CatVTONPipeline
-from model.cloth_masker import AutoMasker
+from model.cloth_masker import AutoMasker, part_mask_of, LIP_MAPPING
 from utils import resize_and_crop, resize_and_padding, repaint_result
 
 _auto_masker = None
@@ -329,24 +330,37 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
 
         print(f"  Diffusion completed in {time.time() - t2:.1f}s")
 
-        # ── Step 3: Seamless Repainting (Authentic Background Preservation & Exact Alignment) ──
+        # ── Step 3: Pure Diffusion Synthesis (Zero Old-Garment Bleed & Zero Ghosting) ──
+        # Official CatVTON inpainting naturally renders the entire garment, collar, and waist seamlessly.
+        # Repainting with person_image_orig previously caused the old shirt's collar, sleeves, and 
+        # abdomen fabric to leak through as ugly double-exposures and ghost shadows!
         simple_mode = profile.get('simple_mode', False)
-        print(f"\n[CatVTON 3/3] Blending synthesized garment ({'Simple/Fast' if simple_mode else 'Studio/Crisp Feathered'})...")
+        print(f"\n[CatVTON 3/3] Finalizing output (Pure Diffusion Synthesis — No Old Shirt Bleed)...")
 
-        # Scale result and raw mask back to the EXACT crop box dimensions (crop_w, crop_h)
-        # Using raw_mask ensures sharp geometric boundary without blurred mask shrinkage!
+        # Scale result_image back to exact crop box dimensions
         result_crop = result_image.resize((crop_w, crop_h), Image.LANCZOS)
-        mask_crop = raw_mask.resize((crop_w, crop_h), Image.NEAREST)
 
-        # Seamlessly blend result_crop onto person_cropped (0px coordinate shift, perfect alignment)
-        blended_crop = repaint_result(result_crop, person_cropped, mask_crop, simple_mode=simple_mode)
+        # Retain 100% original facial sharpness (pure face skin/eyes only — strictly NO clothing/collar)
+        try:
+            face_mask_np = part_mask_of('Face', np.array(mask_dict['schp_lip']), LIP_MAPPING)
+            if np.any(face_mask_np):
+                face_mask_pil = Image.fromarray((face_mask_np * 255).astype(np.uint8)).resize((crop_w, crop_h), Image.LANCZOS)
+                face_mask_eroded = cv2.erode(np.array(face_mask_pil), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+                face_alpha = cv2.GaussianBlur(face_mask_eroded.astype(np.float32), (5, 5), 0) / 255.0
+                face_alpha = np.expand_dims(face_alpha, axis=2)
+                res_np = np.array(result_crop).astype(np.float32)
+                pers_np = np.array(person_cropped).astype(np.float32)
+                blended_crop_np = res_np * (1.0 - face_alpha) + pers_np * face_alpha
+                result_crop = Image.fromarray(np.clip(blended_crop_np, 0, 255).astype(np.uint8))
+        except Exception as e:
+            print(f"  [Face Passthrough] Notice: {e}")
 
-        # Paste back into person_image_orig at the exact coordinate location
+        # Paste back into person_image_orig at exact coordinate location if cropped
         if crop_box == (0, 0, orig_w, orig_h):
-            final_result = blended_crop
+            final_result = result_crop
         else:
             final_result = person_image_orig.copy()
-            final_result.paste(blended_crop, (crop_box[0], crop_box[1]))
+            final_result.paste(result_crop, (crop_box[0], crop_box[1]))
 
         # Ensure output directory exists and save
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
