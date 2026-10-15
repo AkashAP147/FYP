@@ -171,29 +171,29 @@ def init_add_item_id(config):
 def repaint_result(result, person_image, mask_image, simple_mode=False):
     """Seamlessly blend the diffusion result into the original person image.
     
-    Uses crisp, fine-grained alpha feathering (5-7px) to achieve flawless,
-    photorealistic edge blending without translucent halos, ghosting, or see-through hems.
+    Uses crisp, fine-grained alpha feathering (3-5px) with 1px mask coverage
+    to achieve flawless, photorealistic edge blending without translucent halos, ghosting, or see-through hems.
     """
     import cv2
     result_np = np.array(result).astype(np.float32)
     person_np = np.array(person_image).astype(np.float32)
     mask_np = np.array(mask_image).astype(np.uint8)
     
-    # 1. Clean binarization to remove any pre-blur or faint halos from previous steps
+    # 1. Clean binarization (ensure crisp binary boundary)
     mask_bin = np.zeros_like(mask_np, dtype=np.uint8)
-    mask_bin[mask_np > 127] = 255
+    mask_bin[mask_np > 100] = 255
     
     h, w = mask_bin.shape[:2]
     
-    # 2. Subtle 1-2px morphological erosion to ensure new garment covers the old seam
+    # 2. Subtle 1px dilation ensures new garment completely covers the old garment perimeter
+    # (Erosion previously caused the old shirt edges to bleed through as ghost halos!)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask_eroded = cv2.erode(mask_bin, kernel, iterations=1)
+    mask_covered = cv2.dilate(mask_bin, kernel, iterations=1)
     
-    # 3. Controlled, crisp feathering (5-7px max)
-    # A tight 5-7px Gaussian blur creates a soft, natural 2-3px transition zone
-    # that eliminates hard steps while PREVENTING wide translucent ghost halos in the background!
-    blur_k = 5 if simple_mode or min(h, w) < 800 else 7
-    alpha = cv2.GaussianBlur(mask_eroded.astype(np.float32), (blur_k, blur_k), 0) / 255.0
+    # 3. Controlled, crisp feathering (3-5px max)
+    # Tight Gaussian blur creates a seamless 1-2px transition zone with zero ghosting
+    blur_k = 3 if simple_mode or min(h, w) < 800 else 5
+    alpha = cv2.GaussianBlur(mask_covered.astype(np.float32), (blur_k, blur_k), 0) / 255.0
     alpha = np.clip(alpha, 0.0, 1.0)
     alpha = np.expand_dims(alpha, axis=2)
     

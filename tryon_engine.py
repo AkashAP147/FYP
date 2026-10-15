@@ -216,6 +216,29 @@ def _lazy_load_models():
     print(f"Official CatVTON Engine Ready [{_perf_profile.upper()}]")
     print("=" * 60)
 
+def get_crop_box(orig_w, orig_h, target_w, target_h):
+    """
+    Computes exact crop box with target aspect ratio (3:4) that captures the human body
+    without cutting off heads or distorting vertical coordinates.
+    """
+    if orig_w / orig_h < target_w / target_h:
+        # Taller than target aspect ratio (e.g. phone portrait 9:16 or full-body 1:2)
+        crop_w = orig_w
+        crop_h = int(orig_w * target_h / target_w)
+        # Position crop from top with a gentle 15-20% margin to ensure head & torso are centered
+        max_top = orig_h - crop_h
+        top = max(0, min(max_top, int((orig_h - crop_h) * 0.20)))
+        return (0, top, crop_w, top + crop_h)
+    elif orig_w / orig_h > target_w / target_h:
+        # Wider than target aspect ratio (e.g. landscape or wide photo)
+        crop_h = orig_h
+        crop_w = int(orig_h * target_w / target_h)
+        left = (orig_w - crop_w) // 2
+        return (left, 0, left + crop_w, crop_h)
+    else:
+        # Exact aspect ratio match (e.g. 3:4 studio portrait)
+        return (0, 0, orig_w, orig_h)
+
 def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_mobile=False):
     """
     Execute virtual try-on using the clean official CatVTON repository pipeline.
@@ -252,8 +275,13 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
         height = profile['height']
         mode_label = "MOBILE-FAST" if is_mobile else _perf_profile.upper()
 
-        # Resize and prepare inputs using official CatVTON utilities
-        person_image = resize_and_crop(person_image_orig, (width, height))
+        # Compute exact crop box with 0-shift aspect ratio alignment
+        crop_box = get_crop_box(orig_w, orig_h, width, height)
+        crop_w = crop_box[2] - crop_box[0]
+        crop_h = crop_box[3] - crop_box[1]
+
+        person_cropped = person_image_orig.crop(crop_box)
+        person_image = person_cropped.resize((width, height), Image.LANCZOS)
         cloth_image = resize_and_padding(cloth_image_orig, (width, height))
 
         # ── Step 1: Agnostic Masking via DensePose & SCHP ──
@@ -267,7 +295,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
             _auto_masker.schp_processor_lip.model.to('cuda')
 
         mask_dict = _auto_masker(person_image, mask_type=cloth_type)
-        mask = mask_dict['mask']
+        raw_mask = mask_dict['mask']
 
         if not profile['keep_models_on_gpu']:
             # Laptop: offload back to CPU
@@ -278,8 +306,8 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
 
         print(f"  Mask generated in {time.time() - t1:.1f}s")
 
-        # Apply official mask boundary blur
-        mask = _mask_processor.blur(mask, blur_factor=profile['blur_factor'])
+        # Apply official mask boundary blur for diffusion inpainting
+        blurred_mask = _mask_processor.blur(raw_mask, blur_factor=profile['blur_factor'])
 
         # ── Step 2: Official Diffusion Inference ──
         steps = profile['num_inference_steps']
@@ -291,7 +319,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
         result_image = _vton_pipeline(
             image=person_image,
             condition_image=cloth_image,
-            mask=mask,
+            mask=blurred_mask,
             num_inference_steps=steps,
             guidance_scale=profile['guidance_scale'],
             height=height,
@@ -301,12 +329,24 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
 
         print(f"  Diffusion completed in {time.time() - t2:.1f}s")
 
-        # ── Step 3: Seamless Repainting (Authentic Background Preservation) ──
+        # ── Step 3: Seamless Repainting (Authentic Background Preservation & Exact Alignment) ──
         simple_mode = profile.get('simple_mode', False)
         print(f"\n[CatVTON 3/3] Blending synthesized garment ({'Simple/Fast' if simple_mode else 'Studio/Crisp Feathered'})...")
-        mask_full = mask.resize((orig_w, orig_h), Image.LANCZOS)
-        result_full = result_image.resize((orig_w, orig_h), Image.LANCZOS)
-        final_result = repaint_result(result_full, person_image_orig, mask_full, simple_mode=simple_mode)
+
+        # Scale result and raw mask back to the EXACT crop box dimensions (crop_w, crop_h)
+        # Using raw_mask ensures sharp geometric boundary without blurred mask shrinkage!
+        result_crop = result_image.resize((crop_w, crop_h), Image.LANCZOS)
+        mask_crop = raw_mask.resize((crop_w, crop_h), Image.NEAREST)
+
+        # Seamlessly blend result_crop onto person_cropped (0px coordinate shift, perfect alignment)
+        blended_crop = repaint_result(result_crop, person_cropped, mask_crop, simple_mode=simple_mode)
+
+        # Paste back into person_image_orig at the exact coordinate location
+        if crop_box == (0, 0, orig_w, orig_h):
+            final_result = blended_crop
+        else:
+            final_result = person_image_orig.copy()
+            final_result.paste(blended_crop, (crop_box[0], crop_box[1]))
 
         # Ensure output directory exists and save
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)

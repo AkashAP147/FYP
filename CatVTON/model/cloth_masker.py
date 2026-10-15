@@ -215,11 +215,11 @@ class AutoMasker:
         schp_lip_mask = np.array(schp_lip_mask)
         schp_atr_mask = np.array(schp_atr_mask)
         
-        # 1. Background Mask: identify genuine background pixels from both SCHP segmentations
+        # 1. Background Mask: identify genuine background pixels from SCHP segmentations
         background_area = (part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & 
                            part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING))
         
-        # 2. Strong Protection: Hands, Face, Accessories, Feet
+        # 2. Strong Protection: Hands, Face
         hand_kernel = np.ones((max(3, max(w, h) // 180), max(3, max(w, h) // 180)), np.uint8)
         hands_dense = part_mask_of(['hands', 'feet'], densepose_mask, DENSE_INDEX_MAP)
         hands_protect_area = cv2.dilate(hands_dense.astype(np.uint8), hand_kernel, iterations=2).astype(bool)
@@ -229,57 +229,59 @@ class AutoMasker:
         face_protect_area = cv2.dilate(face_protect_area.astype(np.uint8), hand_kernel, iterations=1).astype(bool)
         strong_protect_area = hands_protect_area | face_protect_area
         
-        # 3. Weak Protection: Hair, Irrelevant Clothes, Body Parts (Legs for upper, Arms for lower)
-        body_protect_area = (part_mask_of(PROTECT_BODY_PARTS[part], schp_lip_mask, LIP_MAPPING) | 
-                             part_mask_of(PROTECT_BODY_PARTS[part], schp_atr_mask, ATR_MAPPING))
+        # 3. Weak Protection: Hair, Accessories, Lower/Upper specific
         hair_protect_area = (part_mask_of(['Hair'], schp_lip_mask, LIP_MAPPING) | 
                              part_mask_of(['Hair'], schp_atr_mask, ATR_MAPPING))
-        cloth_protect_area = (part_mask_of(PROTECT_CLOTH_PARTS[part]['LIP'], schp_lip_mask, LIP_MAPPING) | 
-                              part_mask_of(PROTECT_CLOTH_PARTS[part]['ATR'], schp_atr_mask, ATR_MAPPING))
-        accessory_parts = ['Hat', 'Glove', 'Sunglasses', 'Bag', 'Left-shoe', 'Right-shoe', 'Scarf', 'Socks']
+        accessory_parts = ['Hat', 'Sunglasses', 'Bag', 'Left-shoe', 'Right-shoe']
         accessory_protect_area = (part_mask_of(accessory_parts, schp_lip_mask, LIP_MAPPING) | 
                                   part_mask_of(accessory_parts, schp_atr_mask, ATR_MAPPING))
         
-        weak_protect_area = (body_protect_area | cloth_protect_area | hair_protect_area | 
-                             strong_protect_area | accessory_protect_area)
+        legs_protect = (part_mask_of(['Left-leg', 'Right-leg'], schp_lip_mask, LIP_MAPPING) | 
+                        part_mask_of(['Left-leg', 'Right-leg'], schp_atr_mask, ATR_MAPPING))
         
-        # 4. Garment Area: Exact existing garment detected on the person
+        # 4. DensePose Anatomical Body Contours (Preserves Natural Waist & Fit)
+        # Torso: true human torso contours (naturally tapers at waist without ballooning)
+        torso_dense = part_mask_of(['torso'], densepose_mask, DENSE_INDEX_MAP)
+        torso_k = max(w, h) // 80
+        torso_k = torso_k if torso_k % 2 == 1 else torso_k + 1
+        torso_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(5, torso_k), max(5, torso_k)))
+        torso_draped = cv2.dilate(torso_dense.astype(np.uint8), torso_kernel, iterations=1).astype(bool)
+        
+        # Arms: target arm anatomy from DensePose, dilated to cover full arm thickness & sleeve boundaries
+        mask_dense_area = part_mask_of(MASK_DENSE_PARTS[part], densepose_mask, DENSE_INDEX_MAP)
+        arm_k = max(w, h) // 70
+        arm_k = arm_k if arm_k % 2 == 1 else arm_k + 1
+        arm_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(7, arm_k), max(7, arm_k)))
+        mask_dense_dilated = cv2.dilate(mask_dense_area.astype(np.uint8), arm_kernel, iterations=1).astype(bool)
+        
+        # 5. Existing Garment Area (Entire original garment must be masked out)
         strong_mask_area = (part_mask_of(MASK_CLOTH_PARTS[part], schp_lip_mask, LIP_MAPPING) | 
                             part_mask_of(MASK_CLOTH_PARTS[part], schp_atr_mask, ATR_MAPPING))
         
-        # DensePose target anatomy
-        mask_dense_area = part_mask_of(MASK_DENSE_PARTS[part], densepose_mask, DENSE_INDEX_MAP)
+        # Combine: Anatomical draped torso + full arm thickness + entire existing garment
+        mask_area = torso_draped | mask_dense_dilated | strong_mask_area
         
-        # 5. Body Contour Preservation (Prevents Ballooning / Oversized Fit)
-        # Apply convex hull ONLY to the torso / garment core, NOT bridging arms to torso through air!
-        torso_dense = part_mask_of(['torso'], densepose_mask, DENSE_INDEX_MAP)
-        torso_core = (torso_dense | strong_mask_area) & (~weak_protect_area) & (~background_area)
-        if np.any(torso_core):
-            torso_hull = hull_mask((torso_core.astype(np.uint8) * 255)) // 255
-            # Strictly exclude background so the hull never expands into empty air between arms & waist
-            torso_hull = torso_hull & (~background_area) & (~weak_protect_area)
-        else:
-            torso_hull = torso_core
+        # Morphological Closing: Bridges buttons/wrinkles internally WITHOUT ballooning the waist!
+        close_k = max(w, h) // 60
+        close_k = close_k if close_k % 2 == 1 else close_k + 1
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(7, close_k), max(7, close_k)))
+        mask_area = cv2.morphologyEx(mask_area.astype(np.uint8), cv2.MORPH_CLOSE, close_kernel).astype(bool)
         
-        # Combine: Torso core + existing garment + anatomical arms
-        mask_area = torso_hull | strong_mask_area | mask_dense_area
+        # Remove protected anatomy
+        mask_area = mask_area & (~strong_protect_area) & (~hair_protect_area) & (~accessory_protect_area)
+        if part == 'upper':
+            mask_area = mask_area & (~legs_protect)
+        elif part == 'lower':
+            mask_area = mask_area & (~torso_dense)
+            
+        # Protect genuine background outside the person's body and original garment
+        pure_background = background_area & (~strong_mask_area)
+        mask_area = mask_area & (~pure_background)
         
-        # Enforce hard boundaries: NO background, NO protected anatomy
-        mask_area = mask_area & (~weak_protect_area) & (~strong_protect_area) & (~background_area)
-        
-        # Morphological close to bridge small internal wrinkles inside the garment
-        close_kernel_size = max(max(w, h) // 100, 3)
-        if close_kernel_size % 2 == 0:
-            close_kernel_size += 1
-        close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_kernel_size, close_kernel_size))
-        mask_area = cv2.morphologyEx(mask_area.astype(np.uint8), cv2.MORPH_CLOSE, close_kernel)
-        
-        # Subtle 1px boundary dilation for clean anti-aliased edge
+        # Subtle 1px anti-aliased edge dilation
         dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        mask_area = cv2.dilate(mask_area, dilate_kernel, iterations=1)
-        
-        # STRICT FINAL ENFORCEMENT: Mask must NEVER touch background outside the person's body!
-        mask_area = mask_area & (~background_area) & (~strong_protect_area)
+        mask_area = cv2.dilate(mask_area.astype(np.uint8), dilate_kernel, iterations=1)
+        mask_area = mask_area & (~strong_protect_area)
         
         return Image.fromarray((mask_area * 255).astype(np.uint8))
         
