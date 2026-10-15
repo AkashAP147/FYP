@@ -171,54 +171,33 @@ def init_add_item_id(config):
 def repaint_result(result, person_image, mask_image, simple_mode=False):
     """Seamlessly blend the diffusion result into the original person image.
     
-    Modes:
-      - simple_mode=True (Mobile): Ultra-fast single-pass Gaussian feathering (<10ms).
-      - simple_mode=False (Regular): 3-stage feathered alpha compositing with morphological
-        erosion and dual-pass Gaussian blur for studio-quality edge anti-aliasing.
+    Uses crisp, fine-grained alpha feathering (5-7px) to achieve flawless,
+    photorealistic edge blending without translucent halos, ghosting, or see-through hems.
     """
     import cv2
     result_np = np.array(result).astype(np.float32)
     person_np = np.array(person_image).astype(np.float32)
     mask_np = np.array(mask_image).astype(np.uint8)
     
-    h, w = mask_np.shape[:2]
+    # 1. Clean binarization to remove any pre-blur or faint halos from previous steps
+    mask_bin = np.zeros_like(mask_np, dtype=np.uint8)
+    mask_bin[mask_np > 127] = 255
     
-    if simple_mode:
-        # Fast path for mobile: single-pass Gaussian blur directly on mask
-        blur_size = max(h, w) // 50
-        if blur_size % 2 == 0:
-            blur_size += 1
-        blur_size = max(blur_size, 3)
-        alpha = cv2.GaussianBlur(mask_np.astype(np.float32), (blur_size, blur_size), 0) / 255.0
-        alpha = np.clip(alpha, 0.0, 1.0)
-        alpha = np.expand_dims(alpha, axis=2)
-        blended = result_np * alpha + person_np * (1.0 - alpha)
-        return Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8))
+    h, w = mask_bin.shape[:2]
     
-    # --- Stage 1: Morphological erosion to pull mask boundary inward ---
-    erode_size = max(3, min(h, w) // 150)
-    if erode_size % 2 == 0:
-        erode_size += 1
-    erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (erode_size, erode_size))
-    mask_eroded = cv2.erode(mask_np, erode_kernel, iterations=1)
+    # 2. Subtle 1-2px morphological erosion to ensure new garment covers the old seam
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask_eroded = cv2.erode(mask_bin, kernel, iterations=1)
     
-    # --- Stage 2: Multi-pass Gaussian feathering for smooth alpha gradient ---
-    blur_size = max(h, w) // 40
-    if blur_size % 2 == 0:
-        blur_size += 1
-    blur_size = max(blur_size, 5)
-    
-    alpha = cv2.GaussianBlur(mask_eroded.astype(np.float32), (blur_size, blur_size), 0)
-    fine_blur = max(blur_size // 3, 3)
-    if fine_blur % 2 == 0:
-        fine_blur += 1
-    alpha = cv2.GaussianBlur(alpha, (fine_blur, fine_blur), 0)
-    
-    alpha = alpha / 255.0
+    # 3. Controlled, crisp feathering (5-7px max)
+    # A tight 5-7px Gaussian blur creates a soft, natural 2-3px transition zone
+    # that eliminates hard steps while PREVENTING wide translucent ghost halos in the background!
+    blur_k = 5 if simple_mode or min(h, w) < 800 else 7
+    alpha = cv2.GaussianBlur(mask_eroded.astype(np.float32), (blur_k, blur_k), 0) / 255.0
     alpha = np.clip(alpha, 0.0, 1.0)
     alpha = np.expand_dims(alpha, axis=2)
     
-    # --- Stage 3: Float-precision alpha blending ---
+    # 4. Precision float blending
     blended = result_np * alpha + person_np * (1.0 - alpha)
     blended = np.clip(blended, 0, 255).astype(np.uint8)
     

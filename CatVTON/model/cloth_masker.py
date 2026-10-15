@@ -211,87 +211,77 @@ class AutoMasker:
         assert part in ['upper', 'lower', 'overall', 'inner', 'outer'], f"part should be one of ['upper', 'lower', 'overall', 'inner', 'outer'], but got {part}"
         w, h = densepose_mask.size
         
-        # Larger dilation kernel for better garment boundary coverage
-        dilate_kernel_size = max(w, h) // 200
-        dilate_kernel_size = dilate_kernel_size if dilate_kernel_size % 2 == 1 else dilate_kernel_size + 1
-        dilate_kernel_size = max(dilate_kernel_size, 3)
-        dilate_kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
-        
-        # Separate larger kernel for hand/feet protection (prevents hand clipping)
-        hand_dilate_size = max(w, h) // 120
-        hand_dilate_size = hand_dilate_size if hand_dilate_size % 2 == 1 else hand_dilate_size + 1
-        hand_dilate_size = max(hand_dilate_size, 5)
-        hand_dilate_kernel = np.ones((hand_dilate_size, hand_dilate_size), np.uint8)
-        
-        kernal_size = max(w, h) // 25
-        kernal_size = kernal_size if kernal_size % 2 == 1 else kernal_size + 1
-        
         densepose_mask = np.array(densepose_mask)
         schp_lip_mask = np.array(schp_lip_mask)
         schp_atr_mask = np.array(schp_atr_mask)
         
-        # Strong Protect Area (Hands, Face, Accessory, Feet)
-        # Use larger dilation on hands/feet to prevent clipping at wrists/sleeves
-        hands_protect_area = part_mask_of(['hands', 'feet'], densepose_mask, DENSE_INDEX_MAP)
-        hands_protect_area = cv2.dilate(hands_protect_area, hand_dilate_kernel, iterations=2)
-        hands_protect_area = hands_protect_area & \
-            (part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_atr_mask, ATR_MAPPING) | \
-             part_mask_of(['Left-arm', 'Right-arm', 'Left-leg', 'Right-leg'], schp_lip_mask, LIP_MAPPING))
-        face_protect_area = part_mask_of('Face', schp_lip_mask, LIP_MAPPING)
-        # Also dilate face protection slightly
-        face_protect_area = cv2.dilate(face_protect_area.astype(np.uint8), dilate_kernel, iterations=1).astype(bool)
-
-        strong_protect_area = hands_protect_area | face_protect_area 
-
-        # Weak Protect Area (Hair, Irrelevant Clothes, Body Parts)
-        body_protect_area = part_mask_of(PROTECT_BODY_PARTS[part], schp_lip_mask, LIP_MAPPING) | part_mask_of(PROTECT_BODY_PARTS[part], schp_atr_mask, ATR_MAPPING)
-        hair_protect_area = part_mask_of(['Hair'], schp_lip_mask, LIP_MAPPING) | \
-            part_mask_of(['Hair'], schp_atr_mask, ATR_MAPPING)
-        cloth_protect_area = part_mask_of(PROTECT_CLOTH_PARTS[part]['LIP'], schp_lip_mask, LIP_MAPPING) | \
-            part_mask_of(PROTECT_CLOTH_PARTS[part]['ATR'], schp_atr_mask, ATR_MAPPING)
-        accessory_protect_area = part_mask_of((accessory_parts := ['Hat', 'Glove', 'Sunglasses', 'Bag', 'Left-shoe', 'Right-shoe', 'Scarf', 'Socks']), schp_lip_mask, LIP_MAPPING) | \
-            part_mask_of(accessory_parts, schp_atr_mask, ATR_MAPPING) 
-        weak_protect_area = body_protect_area | cloth_protect_area | hair_protect_area | strong_protect_area | accessory_protect_area
+        # 1. Background Mask: identify genuine background pixels from both SCHP segmentations
+        background_area = (part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & 
+                           part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING))
         
-        # Mask Area
-        strong_mask_area = part_mask_of(MASK_CLOTH_PARTS[part], schp_lip_mask, LIP_MAPPING) | \
-            part_mask_of(MASK_CLOTH_PARTS[part], schp_atr_mask, ATR_MAPPING)
-        background_area = part_mask_of(['Background'], schp_lip_mask, LIP_MAPPING) & part_mask_of(['Background'], schp_atr_mask, ATR_MAPPING)
+        # 2. Strong Protection: Hands, Face, Accessories, Feet
+        hand_kernel = np.ones((max(3, max(w, h) // 180), max(3, max(w, h) // 180)), np.uint8)
+        hands_dense = part_mask_of(['hands', 'feet'], densepose_mask, DENSE_INDEX_MAP)
+        hands_protect_area = cv2.dilate(hands_dense.astype(np.uint8), hand_kernel, iterations=2).astype(bool)
+        
+        face_protect_area = (part_mask_of('Face', schp_lip_mask, LIP_MAPPING) | 
+                             part_mask_of('Face', schp_atr_mask, ATR_MAPPING))
+        face_protect_area = cv2.dilate(face_protect_area.astype(np.uint8), hand_kernel, iterations=1).astype(bool)
+        strong_protect_area = hands_protect_area | face_protect_area
+        
+        # 3. Weak Protection: Hair, Irrelevant Clothes, Body Parts (Legs for upper, Arms for lower)
+        body_protect_area = (part_mask_of(PROTECT_BODY_PARTS[part], schp_lip_mask, LIP_MAPPING) | 
+                             part_mask_of(PROTECT_BODY_PARTS[part], schp_atr_mask, ATR_MAPPING))
+        hair_protect_area = (part_mask_of(['Hair'], schp_lip_mask, LIP_MAPPING) | 
+                             part_mask_of(['Hair'], schp_atr_mask, ATR_MAPPING))
+        cloth_protect_area = (part_mask_of(PROTECT_CLOTH_PARTS[part]['LIP'], schp_lip_mask, LIP_MAPPING) | 
+                              part_mask_of(PROTECT_CLOTH_PARTS[part]['ATR'], schp_atr_mask, ATR_MAPPING))
+        accessory_parts = ['Hat', 'Glove', 'Sunglasses', 'Bag', 'Left-shoe', 'Right-shoe', 'Scarf', 'Socks']
+        accessory_protect_area = (part_mask_of(accessory_parts, schp_lip_mask, LIP_MAPPING) | 
+                                  part_mask_of(accessory_parts, schp_atr_mask, ATR_MAPPING))
+        
+        weak_protect_area = (body_protect_area | cloth_protect_area | hair_protect_area | 
+                             strong_protect_area | accessory_protect_area)
+        
+        # 4. Garment Area: Exact existing garment detected on the person
+        strong_mask_area = (part_mask_of(MASK_CLOTH_PARTS[part], schp_lip_mask, LIP_MAPPING) | 
+                            part_mask_of(MASK_CLOTH_PARTS[part], schp_atr_mask, ATR_MAPPING))
+        
+        # DensePose target anatomy
         mask_dense_area = part_mask_of(MASK_DENSE_PARTS[part], densepose_mask, DENSE_INDEX_MAP)
         
-        original_shape = mask_dense_area.shape[:2]  # (height, width)
-        mask_dense_area = cv2.resize(mask_dense_area.astype(np.uint8), None, fx=0.25, fy=0.25, interpolation=cv2.INTER_NEAREST)
-        mask_dense_area = cv2.dilate(mask_dense_area, dilate_kernel, iterations=2)
-        mask_dense_area = cv2.resize(mask_dense_area, (original_shape[1], original_shape[0]), interpolation=cv2.INTER_NEAREST)
-
-        mask_area = (np.ones_like(densepose_mask) & (~weak_protect_area) & (~background_area)) | mask_dense_area
-
-        mask_area = hull_mask(mask_area * 255) // 255  # Convex Hull to expand the mask area
-        mask_area = mask_area & (~weak_protect_area)
+        # 5. Body Contour Preservation (Prevents Ballooning / Oversized Fit)
+        # Apply convex hull ONLY to the torso / garment core, NOT bridging arms to torso through air!
+        torso_dense = part_mask_of(['torso'], densepose_mask, DENSE_INDEX_MAP)
+        torso_core = (torso_dense | strong_mask_area) & (~weak_protect_area) & (~background_area)
+        if np.any(torso_core):
+            torso_hull = hull_mask((torso_core.astype(np.uint8) * 255)) // 255
+            # Strictly exclude background so the hull never expands into empty air between arms & waist
+            torso_hull = torso_hull & (~background_area) & (~weak_protect_area)
+        else:
+            torso_hull = torso_core
         
-        # Multi-pass Gaussian smoothing for smoother mask boundaries
-        mask_area_255 = (mask_area * 255).astype(np.uint8)
-        mask_area_255 = cv2.GaussianBlur(mask_area_255, (kernal_size, kernal_size), 0)
-        # Second smoothing pass with smaller kernel for refined edges
-        fine_kernel = max(kernal_size // 3, 3)
-        fine_kernel = fine_kernel if fine_kernel % 2 == 1 else fine_kernel + 1
-        mask_area_255 = cv2.GaussianBlur(mask_area_255, (fine_kernel, fine_kernel), 0)
-        mask_area = np.zeros_like(mask_area_255)
-        mask_area[mask_area_255 < 20] = 0
-        mask_area[mask_area_255 >= 20] = 1
+        # Combine: Torso core + existing garment + anatomical arms
+        mask_area = torso_hull | strong_mask_area | mask_dense_area
         
-        mask_area = (mask_area | strong_mask_area) & (~strong_protect_area)
+        # Enforce hard boundaries: NO background, NO protected anatomy
+        mask_area = mask_area & (~weak_protect_area) & (~strong_protect_area) & (~background_area)
         
-        # Morphological closing to fill small holes/gaps in the mask
-        close_kernel_size = max(w, h) // 80
-        close_kernel_size = close_kernel_size if close_kernel_size % 2 == 1 else close_kernel_size + 1
-        close_kernel_size = max(close_kernel_size, 3)
+        # Morphological close to bridge small internal wrinkles inside the garment
+        close_kernel_size = max(max(w, h) // 100, 3)
+        if close_kernel_size % 2 == 0:
+            close_kernel_size += 1
         close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_kernel_size, close_kernel_size))
         mask_area = cv2.morphologyEx(mask_area.astype(np.uint8), cv2.MORPH_CLOSE, close_kernel)
         
+        # Subtle 1px boundary dilation for clean anti-aliased edge
+        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         mask_area = cv2.dilate(mask_area, dilate_kernel, iterations=1)
-
-        return Image.fromarray(mask_area * 255)
+        
+        # STRICT FINAL ENFORCEMENT: Mask must NEVER touch background outside the person's body!
+        mask_area = mask_area & (~background_area) & (~strong_protect_area)
+        
+        return Image.fromarray((mask_area * 255).astype(np.uint8))
         
     def __call__(
         self,

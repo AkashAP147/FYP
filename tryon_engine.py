@@ -56,7 +56,7 @@ PROFILES = {
         'height': 1024,
         'num_inference_steps': 50,      # 50 steps is regular baseline
         'guidance_scale': 2.5,
-        'blur_factor': 13,
+        'blur_factor': 9,               # Official CatVTON blur factor
         'keep_models_on_gpu': True,     # Pinned on GPU — no PCIe transfer lag
         'use_xformers': True,           # Memory-efficient attention
         'gradient_checkpointing': False,
@@ -177,11 +177,11 @@ def _lazy_load_models():
         print("  [Colab] Masker models pinned to GPU (Parallel streams ready) ⚡")
 
     # 3. Load CatVTON Diffusion Inpainting Pipeline
-    print("[3/3] Loading CatVTON Diffusion Pipeline...")
+    print("[3/3] Loading CatVTON Diffusion Pipeline (mix-48k-1024 high-res)...")
     _vton_pipeline = CatVTONPipeline(
         base_ckpt="booksforcharlie/stable-diffusion-inpainting",
         attn_ckpt=_repo_path,
-        attn_ckpt_version="vitonhd",
+        attn_ckpt_version="mix",        # Official 1024x768 48k checkpoint
         weight_dtype=torch.float16 if device == 'cuda' else torch.float32,
         device=device,
         use_tf32=True,
@@ -303,14 +303,8 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
 
         # ── Step 3: Seamless Repainting (Authentic Background Preservation) ──
         simple_mode = profile.get('simple_mode', False)
-        print(f"\n[CatVTON 3/3] Blending synthesized garment ({'Simple/Fast' if simple_mode else 'Studio/Feathered'})...")
+        print(f"\n[CatVTON 3/3] Blending synthesized garment ({'Simple/Fast' if simple_mode else 'Studio/Crisp Feathered'})...")
         mask_full = mask.resize((orig_w, orig_h), Image.LANCZOS)
-        if not simple_mode:
-            feather_radius = max(orig_h, orig_w) // 50
-            if feather_radius % 2 == 0:
-                feather_radius += 1
-            feather_radius = max(feather_radius, 3)
-            mask_full = mask_full.filter(ImageFilter.GaussianBlur(feather_radius))
         result_full = result_image.resize((orig_w, orig_h), Image.LANCZOS)
         final_result = repaint_result(result_full, person_image_orig, mask_full, simple_mode=simple_mode)
 
