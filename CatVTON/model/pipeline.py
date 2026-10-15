@@ -31,10 +31,12 @@ class CatVTONPipeline:
         compile=False,
         skip_safety_check=False,
         use_tf32=True,
+        keep_models_on_gpu=False,
     ):
         self.device = device
         self.weight_dtype = weight_dtype
         self.skip_safety_check = skip_safety_check
+        self.keep_models_on_gpu = keep_models_on_gpu
 
         self.noise_scheduler = DDIMScheduler.from_pretrained(base_ckpt, subfolder="scheduler")
         self.vae = AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse").to(device, dtype=weight_dtype)
@@ -50,10 +52,15 @@ class CatVTONPipeline:
             self.unet = torch.compile(self.unet)
             self.vae = torch.compile(self.vae, mode="reduce-overhead")
             
-        # Enable TF32 for faster training on Ampere GPUs (A100 and RTX 30 series).
+        # Enable TF32 and cuDNN benchmark for parallel tensor cores and fast conv execution
         if use_tf32:
-            torch.set_float32_matmul_precision("high")
+            try:
+                torch.set_float32_matmul_precision("high")
+            except Exception:
+                pass
             torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
 
     def auto_attn_ckpt_load(self, attn_ckpt, version):
         sub_folder = {
@@ -193,9 +200,10 @@ class CatVTONPipeline:
                 ):
                     progress_bar.update()
 
-        # Free VRAM by moving UNet to CPU before VAE decoding!
-        self.unet.to('cpu')
-        torch.cuda.empty_cache()
+        # Only offload UNet to CPU if keep_models_on_gpu is False (saves PCIe round-trip on Colab)
+        if not getattr(self, 'keep_models_on_gpu', False):
+            self.unet.to('cpu')
+            torch.cuda.empty_cache()
 
         # Decode the final latents
         latents = latents.split(latents.shape[concat_dim] // 2, dim=concat_dim)[0]
@@ -203,8 +211,9 @@ class CatVTONPipeline:
         image = self.vae.decode(latents.to(self.device, dtype=self.weight_dtype)).sample
         image = (image / 2 + 0.5).clamp(0, 1)
         
-        # Move UNet back to GPU
-        self.unet.to(self.device)
+        # Move UNet back to GPU only if it was offloaded
+        if not getattr(self, 'keep_models_on_gpu', False):
+            self.unet.to(self.device)
         # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
         image = image.cpu().permute(0, 2, 3, 1).float().numpy()
         image = numpy_to_pil(image)

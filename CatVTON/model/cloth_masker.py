@@ -162,6 +162,7 @@ class AutoMasker:
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
         
+        self.device = device
         self.densepose_processor = DensePose(densepose_ckpt, device)
         self.schp_processor_atr = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908301523-atr.pth'), device=device)
         self.schp_processor_lip = SCHP(ckpt_path=os.path.join(schp_ckpt, 'exp-schp-201908261155-lip.pth'), device=device)
@@ -178,6 +179,21 @@ class AutoMasker:
         return self.schp_processor_atr(image_or_path)
         
     def preprocess_image(self, image_or_path):
+        # Parallel GPU execution for DensePose + SCHP (ATR & LIP)
+        if torch.cuda.is_available() and getattr(self, 'device', 'cpu') != 'cpu':
+            from concurrent.futures import ThreadPoolExecutor
+            try:
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    f_dp = executor.submit(self.densepose_processor, image_or_path, resize=1024)
+                    f_atr = executor.submit(self.schp_processor_atr, image_or_path)
+                    f_lip = executor.submit(self.schp_processor_lip, image_or_path)
+                    return {
+                        'densepose': f_dp.result(),
+                        'schp_atr': f_atr.result(),
+                        'schp_lip': f_lip.result()
+                    }
+            except Exception as e:
+                print(f"[AutoMasker] Parallel execution notice: {e}, falling back to sequential")
         return {
             'densepose': self.densepose_processor(image_or_path, resize=1024),
             'schp_atr': self.schp_processor_atr(image_or_path),

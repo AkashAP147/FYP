@@ -104,7 +104,7 @@ def start_flask_server():
     print("3. Starting Flask Virtual Try-On API Server")
     print("=" * 65)
     from app import app
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
 
 if __name__ == "__main__":
     check_environment()

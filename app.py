@@ -116,11 +116,31 @@ def classify_endpoint():
     except Exception as e:
         return jsonify({'error': str(e), 'category': 'upper', 'label': 'Top / Upper Body'}), 500
 
+def _is_mobile_request(req):
+    """Detect if request is from mobile device or requesting fast simple processing."""
+    ua = req.headers.get('User-Agent', '').lower()
+    mobile_keywords = ['mobile', 'android', 'iphone', 'ipad', 'ipod', 'blackberry', 'iemobile', 'opera mini', 'webos']
+    if any(k in ua for k in mobile_keywords):
+        return True
+    if req.form.get('is_mobile', '').lower() in ['true', '1', 'yes']:
+        return True
+    if req.form.get('device', '').lower() == 'mobile':
+        return True
+    if req.form.get('mode', '').lower() in ['mobile', 'simple', 'fast']:
+        return True
+    if req.args.get('mobile', '').lower() in ['true', '1']:
+        return True
+    return False
+
 @app.route('/process', methods=['POST'])
 def process_image():
     # Only Try-On is supported
     ai_mode = 'tryon'
     reference_filename = request.form.get('reference_filename')
+
+    is_mobile = _is_mobile_request(request)
+    if is_mobile:
+        print("[Flask API] 📱 Mobile client detected — simple fast processing profile active")
 
     filename = None
     input_path = None
@@ -154,7 +174,7 @@ def process_image():
 
     # ── DUAL GARMENTS TRY-ON (Both clothes at a time) ──
     if has_dual:
-        print("[Flask API] Processing DUAL GARMENT try-on (Top + Bottom)...")
+        print(f"[Flask API] Processing DUAL GARMENT try-on (Top + Bottom) [{'MOBILE-FAST' if is_mobile else 'DESKTOP'}]...")
         # 1. Resolve Top Garment
         top_path = None
         if 'clothing_file_top' in request.files:
@@ -192,11 +212,12 @@ def process_image():
         output_filename = f"dual_{filename}"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
-        success = process_dual_tryon(input_path, top_path, bottom_path, output_path)
+        success = process_dual_tryon(input_path, top_path, bottom_path, output_path, is_mobile=is_mobile)
         if success:
             return jsonify({
                 'success': True,
                 'mode': 'dual',
+                'is_mobile': is_mobile,
                 'input_filename': filename,
                 'output_filename': output_filename,
                 'output_url': url_for('static', filename=f'outputs/{output_filename}'),
@@ -233,11 +254,12 @@ def process_image():
     output_filename = f"{ai_mode}_{filename}"
     output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
-    success = process_tryon(input_path, clothing_input_path, output_path, cloth_type)
+    success = process_tryon(input_path, clothing_input_path, output_path, cloth_type, is_mobile=is_mobile)
     if success:
         return jsonify({
             'success': True,
             'mode': 'single',
+            'is_mobile': is_mobile,
             'input_filename': filename,
             'output_filename': output_filename,
             'detected_cloth_type': cloth_type,
