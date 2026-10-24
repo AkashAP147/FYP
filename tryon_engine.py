@@ -115,16 +115,16 @@ def _detect_environment():
 
         if is_colab or vram_gb >= 12:
             _perf_profile = 'colab'
-            print(f"[Engine] ⚡ HIGH-PERFORMANCE GPU MODE — {device_name} ({vram_gb:.1f}GB VRAM)")
-            print(f"[Engine]   Parallel cuDNN: ON | Resolution: 768×1024 | Steps: 50 | GPU Pinned")
+            print(f"[Engine] [HIGH-GPU MODE] -- {device_name} ({vram_gb:.1f}GB VRAM)")
+            print(f"[Engine]   Parallel cuDNN: ON | Resolution: 768x1024 | Steps: 50 | GPU Pinned")
         else:
             _perf_profile = 'laptop'
-            print(f"[Engine] 🔋 REGULAR MODE — {device_name} ({vram_gb:.1f}GB VRAM)")
-            print(f"[Engine]   Resolution: 576×768 | Steps: 50 | CPU offloading enabled")
+            print(f"[Engine] [REGULAR GPU MODE] -- {device_name} ({vram_gb:.1f}GB VRAM)")
+            print(f"[Engine]   Resolution: 576x768 | Steps: 50 | CPU offloading enabled")
     else:
         _perf_profile = 'laptop'
-        print(f"[Engine] 🔋 REGULAR MODE — CPU only (no CUDA)")
-        print(f"[Engine]   Resolution: 576×768 | Steps: 50")
+        print(f"[Engine] [REGULAR CPU MODE] -- CPU only (no CUDA)")
+        print(f"[Engine]   Resolution: 576x768 | Steps: 50")
 
 
 def _get_profile(is_mobile=False):
@@ -168,14 +168,16 @@ def _lazy_load_models():
         device=device
     )
 
-    if not profile['keep_models_on_gpu']:
+    if not profile['keep_models_on_gpu'] and torch.cuda.is_available():
         _auto_masker.densepose_processor.predictor.model.to('cpu')
         _auto_masker.schp_processor_atr.model.to('cpu')
         _auto_masker.schp_processor_lip.model.to('cpu')
         torch.cuda.empty_cache()
         print("  [Laptop] Masker models offloaded to CPU")
+    elif profile['keep_models_on_gpu']:
+        print("  [Colab] Masker models pinned to GPU (Parallel streams ready)")
     else:
-        print("  [Colab] Masker models pinned to GPU (Parallel streams ready) ⚡")
+        print("  [CPU] Masker models initialized on CPU")
 
     # 3. Load CatVTON Diffusion Inpainting Pipeline
     print("[3/3] Loading CatVTON Diffusion Pipeline (mix-48k-1024 high-res)...")
@@ -202,7 +204,7 @@ def _lazy_load_models():
     if profile['use_xformers']:
         try:
             _vton_pipeline.unet.enable_xformers_memory_efficient_attention()
-            print("  [Colab] xFormers memory-efficient attention enabled ⚡")
+            print("  [Colab] xFormers memory-efficient attention enabled")
         except Exception:
             print("  [Colab] xFormers not available, using default attention")
 
@@ -289,7 +291,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
         print(f"\n[CatVTON 1/3] Generating agnostic mask for '{cloth_type}' ({width}×{height}) [{mode_label}]...")
         t1 = time.time()
 
-        if not profile['keep_models_on_gpu']:
+        if not profile['keep_models_on_gpu'] and torch.cuda.is_available():
             # Laptop: move masker models to GPU temporarily
             _auto_masker.densepose_processor.predictor.model.to('cuda')
             _auto_masker.schp_processor_atr.model.to('cuda')
@@ -298,7 +300,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
         mask_dict = _auto_masker(person_image, mask_type=cloth_type)
         raw_mask = mask_dict['mask']
 
-        if not profile['keep_models_on_gpu']:
+        if not profile['keep_models_on_gpu'] and torch.cuda.is_available():
             # Laptop: offload back to CPU
             _auto_masker.densepose_processor.predictor.model.to('cpu')
             _auto_masker.schp_processor_atr.model.to('cpu')
@@ -312,7 +314,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
 
         # ── Step 2: Official Diffusion Inference ──
         steps = profile['num_inference_steps']
-        print(f"\n[CatVTON 2/3] Running diffusion pipeline ({steps} steps, {width}×{height}) [{mode_label}]...")
+        print(f"\n[CatVTON 2/3] Running diffusion pipeline ({steps} steps, {width}x{height}) [{mode_label}]...")
         t2 = time.time()
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -335,12 +337,12 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
         # Repainting with person_image_orig previously caused the old shirt's collar, sleeves, and 
         # abdomen fabric to leak through as ugly double-exposures and ghost shadows!
         simple_mode = profile.get('simple_mode', False)
-        print(f"\n[CatVTON 3/3] Finalizing output (Pure Diffusion Synthesis — No Old Shirt Bleed)...")
+        print(f"\n[CatVTON 3/3] Finalizing output (Pure Diffusion Synthesis -- No Old Shirt Bleed)...")
 
         # Scale result_image back to exact crop box dimensions
         result_crop = result_image.resize((crop_w, crop_h), Image.LANCZOS)
 
-        # Retain 100% original facial sharpness (pure face skin/eyes only — strictly NO clothing/collar)
+        # Retain 100% original facial sharpness (pure face skin/eyes only -- strictly NO clothing/collar)
         try:
             face_mask_np = part_mask_of('Face', np.array(mask_dict['schp_lip']), LIP_MAPPING)
             if np.any(face_mask_np):
@@ -370,7 +372,7 @@ def process_tryon(target_path, source_path, output_path, cloth_type='upper', is_
             final_result.save(output_path, quality=95)
 
         total_time = time.time() - t_start
-        print(f"✅ Done in {total_time:.1f}s [{mode_label}] → {output_path}")
+        print(f"[SUCCESS] Done in {total_time:.1f}s [{mode_label}] -> {output_path}")
         return True
 
     except Exception as e:

@@ -10,6 +10,8 @@ static/outputs/*
 !static/outputs/.gitkeep
 static/garments/*
 !static/garments/.gitkeep
+static/debug_masks/*
+!static/debug_masks/.gitkeep
 
 # Temporary backups and tests
 .backup_tweaks/

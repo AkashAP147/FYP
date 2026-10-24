@@ -46,6 +46,17 @@ def check_environment():
     except Exception as e:
         print(f"Error checking torch: {e}")
 
+    # Fix torchao / diffusers compatibility issue on Colab
+    try:
+        import torchao
+        try:
+            from torchao.quantization import FqnToConfig
+        except (ImportError, AttributeError):
+            print("Notice: Upgrading torchao for diffusers compatibility...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "torchao>=0.17.0", "-q"], check=False)
+    except ImportError:
+        pass
+
 def setup_cloudflare_tunnel(port=5000):
     print("\n" + "=" * 65)
     print("2. Launching Cloudflare Tunnel (Free, No Sign-up Needed)")

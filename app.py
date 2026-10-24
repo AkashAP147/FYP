@@ -134,139 +134,145 @@ def _is_mobile_request(req):
 
 @app.route('/process', methods=['POST'])
 def process_image():
-    # Only Try-On is supported
-    ai_mode = 'tryon'
-    reference_filename = request.form.get('reference_filename')
+    try:
+        # Only Try-On is supported
+        ai_mode = 'tryon'
+        reference_filename = request.form.get('reference_filename')
 
-    is_mobile = _is_mobile_request(request)
-    if is_mobile:
-        print("[Flask API] 📱 Mobile client detected — simple fast processing profile active")
+        is_mobile = _is_mobile_request(request)
+        if is_mobile:
+            print("[Flask API] [MOBILE] Mobile client detected - simple fast processing profile active")
 
-    filename = None
-    input_path = None
+        filename = None
+        input_path = None
 
-    # Handle Re-Run vs New Upload for Person Image
-    if reference_filename:
-        filename = secure_filename(reference_filename)
-        input_path = _resolve_reference_file(filename)
-        if not input_path:
-            return jsonify({'error': 'Reference person file not found'}), 404
-    else:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No person image file provided'}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No selected person file'}), 400
+        # Handle Re-Run vs New Upload for Person Image
+        if reference_filename:
+            filename = secure_filename(reference_filename)
+            input_path = _resolve_reference_file(filename)
+            if not input_path:
+                return jsonify({'error': 'Reference person file not found'}), 404
+        else:
+            if 'file' not in request.files:
+                return jsonify({'error': 'No person image file provided'}), 400
             
-        input_path, filename = _save_or_resolve_upload(file, prefix="person")
-        if not input_path:
-            return jsonify({'error': 'Invalid file type for person image'}), 400
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({'error': 'No selected person file'}), 400
+                
+            input_path, filename = _save_or_resolve_upload(file, prefix="person")
+            if not input_path:
+                return jsonify({'error': 'Invalid file type for person image'}), 400
 
-    # Determine Try-On Mode: 'single' vs 'dual' (Both garments at once)
-    cloth_mode = request.form.get('cloth_mode', 'single').lower()
-    has_dual = (
-        cloth_mode in ['dual', 'both'] or
-        'clothing_file_bottom' in request.files or
-        'clothing_file_2' in request.files or
-        request.form.get('clothing_reference_bottom')
-    )
+        # Determine Try-On Mode: 'single' vs 'dual' (Both garments at once)
+        cloth_mode = request.form.get('cloth_mode', 'single').lower()
+        has_dual = (
+            cloth_mode in ['dual', 'both'] or
+            'clothing_file_bottom' in request.files or
+            'clothing_file_2' in request.files or
+            request.form.get('clothing_reference_bottom')
+        )
 
-    # ── DUAL GARMENTS TRY-ON (Both clothes at a time) ──
-    if has_dual:
-        print(f"[Flask API] Processing DUAL GARMENT try-on (Top + Bottom) [{'MOBILE-FAST' if is_mobile else 'DESKTOP'}]...")
-        # 1. Resolve Top Garment
-        top_path = None
-        if 'clothing_file_top' in request.files:
-            top_path, _ = _save_or_resolve_upload(request.files['clothing_file_top'], prefix="top")
+        # ── DUAL GARMENTS TRY-ON (Both clothes at a time) ──
+        if has_dual:
+            print(f"[Flask API] Processing DUAL GARMENT try-on (Top + Bottom) [{'MOBILE-FAST' if is_mobile else 'DESKTOP'}]...")
+            # 1. Resolve Top Garment
+            top_path = None
+            if 'clothing_file_top' in request.files:
+                top_path, _ = _save_or_resolve_upload(request.files['clothing_file_top'], prefix="top")
+            elif 'clothing_file' in request.files:
+                top_path, _ = _save_or_resolve_upload(request.files['clothing_file'], prefix="top")
+            elif request.form.get('clothing_reference_top'):
+                top_path = _resolve_reference_file(request.form.get('clothing_reference_top'))
+            elif request.form.get('clothing_reference'):
+                top_path = _resolve_reference_file(request.form.get('clothing_reference'))
+
+            # 2. Resolve Bottom Garment
+            bottom_path = None
+            if 'clothing_file_bottom' in request.files:
+                bottom_path, _ = _save_or_resolve_upload(request.files['clothing_file_bottom'], prefix="bottom")
+            elif 'clothing_file_2' in request.files:
+                bottom_path, _ = _save_or_resolve_upload(request.files['clothing_file_2'], prefix="bottom")
+            elif request.form.get('clothing_reference_bottom'):
+                bottom_path = _resolve_reference_file(request.form.get('clothing_reference_bottom'))
+            elif request.form.get('clothing_reference_2'):
+                bottom_path = _resolve_reference_file(request.form.get('clothing_reference_2'))
+
+            if not top_path or not bottom_path:
+                return jsonify({'error': 'Dual try-on requires both top and bottom clothing images'}), 400
+
+            # Automatic category check & swap if user inverted them
+            cat1 = classify_garment(top_path)
+            cat2 = classify_garment(bottom_path)
+            print(f"[Flask API] Dual classification: Garment 1='{cat1}', Garment 2='{cat2}'")
+
+            if cat1 == 'lower' and cat2 in ['upper', 'overall']:
+                print("[Flask API] Auto-detected inverted garments! Swapping top and bottom slots.")
+                top_path, bottom_path = bottom_path, top_path
+
+            output_filename = f"dual_{filename}"
+            output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+
+            success = process_dual_tryon(input_path, top_path, bottom_path, output_path, is_mobile=is_mobile)
+            if success:
+                return jsonify({
+                    'success': True,
+                    'mode': 'dual',
+                    'is_mobile': is_mobile,
+                    'input_filename': filename,
+                    'output_filename': output_filename,
+                    'output_url': url_for('static', filename=f'outputs/{output_filename}'),
+                    'applied': {
+                        'top': 'upper',
+                        'bottom': 'lower'
+                    }
+                })
+            else:
+                return jsonify({'error': 'Dual try-on failed during synthesis.'}), 500
+
+        # ── SINGLE GARMENT TRY-ON (One at a time) ──
+        clothing_input_path = None
+        cloth_type = request.form.get('cloth_type', 'auto')
+
+        clothing_reference = request.form.get('clothing_reference')
+        if clothing_reference:
+            clothing_input_path = _resolve_reference_file(clothing_reference)
         elif 'clothing_file' in request.files:
-            top_path, _ = _save_or_resolve_upload(request.files['clothing_file'], prefix="top")
-        elif request.form.get('clothing_reference_top'):
-            top_path = _resolve_reference_file(request.form.get('clothing_reference_top'))
-        elif request.form.get('clothing_reference'):
-            top_path = _resolve_reference_file(request.form.get('clothing_reference'))
+            clothing_input_path, _ = _save_or_resolve_upload(request.files['clothing_file'], prefix="cloth")
 
-        # 2. Resolve Bottom Garment
-        bottom_path = None
-        if 'clothing_file_bottom' in request.files:
-            bottom_path, _ = _save_or_resolve_upload(request.files['clothing_file_bottom'], prefix="bottom")
-        elif 'clothing_file_2' in request.files:
-            bottom_path, _ = _save_or_resolve_upload(request.files['clothing_file_2'], prefix="bottom")
-        elif request.form.get('clothing_reference_bottom'):
-            bottom_path = _resolve_reference_file(request.form.get('clothing_reference_bottom'))
-        elif request.form.get('clothing_reference_2'):
-            bottom_path = _resolve_reference_file(request.form.get('clothing_reference_2'))
+        if not clothing_input_path or not os.path.exists(clothing_input_path):
+            return jsonify({'error': 'Missing or invalid source clothing image for Try-On'}), 400
 
-        if not top_path or not bottom_path:
-            return jsonify({'error': 'Dual try-on requires both top and bottom clothing images'}), 400
+        # Auto-recognition if cloth_type is 'auto' or not specified
+        if not cloth_type or cloth_type == 'auto':
+            try:
+                cloth_type = classify_garment(clothing_input_path)
+                print(f"[Flask API] Auto-detected cloth type: '{cloth_type}'")
+            except Exception as e:
+                print('[Flask API] Classification fallback:', e)
+                cloth_type = 'upper'
 
-        # Automatic category check & swap if user inverted them
-        cat1 = classify_garment(top_path)
-        cat2 = classify_garment(bottom_path)
-        print(f"[Flask API] Dual classification: Garment 1='{cat1}', Garment 2='{cat2}'")
-
-        if cat1 == 'lower' and cat2 in ['upper', 'overall']:
-            print("[Flask API] Auto-detected inverted garments! Swapping top and bottom slots.")
-            top_path, bottom_path = bottom_path, top_path
-
-        output_filename = f"dual_{filename}"
+        output_filename = f"{ai_mode}_{filename}"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
-        success = process_dual_tryon(input_path, top_path, bottom_path, output_path, is_mobile=is_mobile)
+        success = process_tryon(input_path, clothing_input_path, output_path, cloth_type, is_mobile=is_mobile)
         if success:
             return jsonify({
                 'success': True,
-                'mode': 'dual',
+                'mode': 'single',
                 'is_mobile': is_mobile,
                 'input_filename': filename,
                 'output_filename': output_filename,
-                'output_url': url_for('static', filename=f'outputs/{output_filename}'),
-                'applied': {
-                    'top': 'upper',
-                    'bottom': 'lower'
-                }
+                'detected_cloth_type': cloth_type,
+                'output_url': url_for('static', filename=f'outputs/{output_filename}')
             })
         else:
-            return jsonify({'error': 'Dual try-on failed during synthesis.'}), 500
+            return jsonify({'error': f'{ai_mode.capitalize()} try-on failed.'}), 500
 
-    # ── SINGLE GARMENT TRY-ON (One at a time) ──
-    clothing_input_path = None
-    cloth_type = request.form.get('cloth_type', 'auto')
-
-    clothing_reference = request.form.get('clothing_reference')
-    if clothing_reference:
-        clothing_input_path = _resolve_reference_file(clothing_reference)
-    elif 'clothing_file' in request.files:
-        clothing_input_path, _ = _save_or_resolve_upload(request.files['clothing_file'], prefix="cloth")
-
-    if not clothing_input_path or not os.path.exists(clothing_input_path):
-        return jsonify({'error': 'Missing or invalid source clothing image for Try-On'}), 400
-
-    # Auto-recognition if cloth_type is 'auto' or not specified
-    if not cloth_type or cloth_type == 'auto':
-        try:
-            cloth_type = classify_garment(clothing_input_path)
-            print(f"[Flask API] Auto-detected cloth type: '{cloth_type}'")
-        except Exception as e:
-            print('[Flask API] Classification fallback:', e)
-            cloth_type = 'upper'
-
-    output_filename = f"{ai_mode}_{filename}"
-    output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
-
-    success = process_tryon(input_path, clothing_input_path, output_path, cloth_type, is_mobile=is_mobile)
-    if success:
-        return jsonify({
-            'success': True,
-            'mode': 'single',
-            'is_mobile': is_mobile,
-            'input_filename': filename,
-            'output_filename': output_filename,
-            'detected_cloth_type': cloth_type,
-            'output_url': url_for('static', filename=f'outputs/{output_filename}')
-        })
-    else:
-        return jsonify({'error': f'{ai_mode.capitalize()} try-on failed.'}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Try-on error: {str(e)}', 'success': False}), 500
 
 
 @app.route('/history')

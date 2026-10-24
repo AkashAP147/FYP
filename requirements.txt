@@ -12,3 +12,4 @@ omegaconf
 pycocotools
 pyngrok>=7.0.0
 ultralytics>=8.0.0
+torchao>=0.17.0
