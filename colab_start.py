@@ -29,6 +29,23 @@ try:
 except ImportError:
     pass
 
+# Diffusers & TorchAO compatibility shim for Google Colab Python 3.13
+try:
+    import torchao.quantization
+    if not hasattr(torchao.quantization, 'FqnToConfig'):
+        class FqnToConfig:
+            pass
+        torchao.quantization.FqnToConfig = FqnToConfig
+except Exception:
+    pass
+
+try:
+    import diffusers.utils.import_utils as _diu
+    _diu._torchao_available = False
+    _diu.is_torchao_available = lambda: False
+except Exception:
+    pass
+
 def check_environment():
     print("=" * 65)
     print("1. Checking Hardware & GPU Acceleration")
@@ -45,17 +62,6 @@ def check_environment():
             print("Please go to Colab Menu -> Runtime -> Change runtime type -> Select T4 GPU.")
     except Exception as e:
         print(f"Error checking torch: {e}")
-
-    # Fix torchao / diffusers compatibility issue on Colab
-    try:
-        import torchao
-        try:
-            from torchao.quantization import FqnToConfig
-        except (ImportError, AttributeError):
-            print("Notice: Upgrading torchao for diffusers compatibility...")
-            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "torchao>=0.17.0", "-q"], check=False)
-    except ImportError:
-        pass
 
 def setup_cloudflare_tunnel(port=5000):
     print("\n" + "=" * 65)

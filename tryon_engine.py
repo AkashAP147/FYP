@@ -35,6 +35,23 @@ CATVTON_DIR = os.path.join(os.path.dirname(__file__), "CatVTON")
 if CATVTON_DIR not in sys.path:
     sys.path.insert(0, CATVTON_DIR)
 
+# Diffusers & TorchAO compatibility shim for Google Colab Python 3.13
+try:
+    import torchao.quantization
+    if not hasattr(torchao.quantization, 'FqnToConfig'):
+        class FqnToConfig:
+            pass
+        torchao.quantization.FqnToConfig = FqnToConfig
+except Exception:
+    pass
+
+try:
+    import diffusers.utils.import_utils as _diu
+    _diu._torchao_available = False
+    _diu.is_torchao_available = lambda: False
+except Exception:
+    pass
+
 import cv2
 from diffusers.image_processor import VaeImageProcessor
 from huggingface_hub import snapshot_download

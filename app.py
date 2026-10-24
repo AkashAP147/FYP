@@ -18,6 +18,23 @@ try:
 except (AttributeError, Exception):
     np.bool = bool
 
+# Diffusers & TorchAO compatibility shim for Google Colab Python 3.13
+try:
+    import torchao.quantization
+    if not hasattr(torchao.quantization, 'FqnToConfig'):
+        class FqnToConfig:
+            pass
+        torchao.quantization.FqnToConfig = FqnToConfig
+except Exception:
+    pass
+
+try:
+    import diffusers.utils.import_utils as _diu
+    _diu._torchao_available = False
+    _diu.is_torchao_available = lambda: False
+except Exception:
+    pass
+
 from flask import Flask, render_template, request, jsonify, url_for
 from werkzeug.utils import secure_filename
 from tryon_engine import process_tryon, process_dual_tryon
