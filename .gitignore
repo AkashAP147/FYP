@@ -12,6 +12,8 @@ static/garments/*
 !static/garments/.gitkeep
 static/debug_masks/*
 !static/debug_masks/.gitkeep
+densepose_/tmp/*
+!densepose_/tmp/.gitkeep
 
 # Temporary backups and tests
 .backup_tweaks/
